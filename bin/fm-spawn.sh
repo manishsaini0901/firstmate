@@ -138,6 +138,14 @@
 #   origin, resolves the current remote default branch, and resets to its tip.
 #   An unreachable origin, unresolved default branch, or non-clean worktree
 #   refuses the spawn rather than risking a PR based on stale history.
+#   A project with NO origin remote configured at all is the remote-less
+#   local-only case instead: there is no remote tip to be stale against, so the
+#   worktree is reset to that repository's own local default branch and a stderr
+#   notice says so. That relaxation is positive-detection only (origin absent
+#   from the configured remote list), so a remote that merely failed to answer
+#   still refuses. A no-mistakes or direct-PR ship into a remote-less project is
+#   refused up front because it could never push a branch or open a PR; a scout
+#   and a --mode local-only ship are allowed.
 #   A slot whose only deviation is a stale submodule gitlink is refused by that
 #   same clean check, but is reported as a stale checkout naming each submodule
 #   and both pins; nothing is converged or removed, and no remedy is suggested.
@@ -1793,24 +1801,76 @@ EOF
   printf '%s' "$lines" >&2
 }
 
+# The local default branch of a repository that has NO remote to resolve one
+# from. Prefers the conventional names, so a project that merely has a feature
+# branch checked out alongside main/master still bases on the conventional
+# default; only a repository with neither falls back to the branch its own
+# checkout has out, which is then the sole local signal of what "default" means
+# there (a project whose trunk is named trunk or develop). Echoes the branch
+# name, or returns 1 when nothing local answers. The caller names the resolved
+# branch in its notice, so this never silently picks a base nobody sees.
+remoteless_default_branch() {  # <worktree>
+  local worktree=$1 branch common
+  for branch in main master; do
+    if git -C "$worktree" show-ref --verify --quiet "refs/heads/$branch"; then
+      printf '%s\n' "$branch"
+      return 0
+    fi
+  done
+  common=$(cd "$worktree" && git rev-parse --git-common-dir 2>/dev/null) || return 1
+  [ -n "$common" ] || return 1
+  case "$common" in /*) ;; *) common="$worktree/$common" ;; esac
+  branch=$(git --git-dir="$common" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 1
+  [ -n "$branch" ] || return 1
+  git -C "$worktree" show-ref --verify --quiet "refs/heads/$branch" || return 1
+  printf '%s\n' "$branch"
+}
+
 freshen_spawn_worktree_base() {  # <worktree>
-  local worktree=$1 default target expected actual status
-  if ! git -C "$worktree" fetch --quiet origin; then
-    echo "error: could not fetch origin for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
-    return 1
-  fi
-  if ! git -C "$worktree" remote set-head origin --auto >/dev/null 2>&1; then
-    echo "error: could not resolve origin's current default branch for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
-    return 1
-  fi
-  default=$(default_branch "$worktree") || {
-    echo "error: could not determine origin's default branch for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
-    return 1
-  }
-  target="origin/$default"
-  if ! git -C "$worktree" fetch --quiet origin "+refs/heads/$default:refs/remotes/origin/$default"; then
-    echo "error: could not fetch '$target' for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
-    return 1
+  local worktree=$1 default target expected actual status proj
+  proj=$(basename "$PROJ_ABS")
+  # A project with NO origin remote configured at all is the legitimate
+  # remote-less local-only case (AGENTS.md section 7; bin/fm-project-mode.sh):
+  # there is no remote tip for this worktree to be stale against, so the base
+  # comes from the repository's own local default branch instead. Detection is
+  # POSITIVE - origin must be absent from the configured remote list - so an
+  # unreachable, misconfigured, or authentication-failing origin still takes the
+  # fetch path below and still refuses, which is the whole safety property: a
+  # remote that failed to answer may well be ahead of this worktree.
+  if git -C "$worktree" remote 2>/dev/null | grep -qx origin; then
+    if ! git -C "$worktree" fetch --quiet origin; then
+      echo "error: could not fetch origin for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
+      return 1
+    fi
+    if ! git -C "$worktree" remote set-head origin --auto >/dev/null 2>&1; then
+      echo "error: could not resolve origin's current default branch for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
+      return 1
+    fi
+    default=$(default_branch "$worktree") || {
+      echo "error: could not determine origin's default branch for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
+      return 1
+    }
+    target="origin/$default"
+    if ! git -C "$worktree" fetch --quiet origin "+refs/heads/$default:refs/remotes/origin/$default"; then
+      echo "error: could not fetch '$target' for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
+      return 1
+    fi
+  else
+    # Gated on the delivery contract on purpose. A no-mistakes or direct-PR ship
+    # cannot push a branch or open a PR against a repository with no remote, so
+    # refusing here - naming the missing remote - beats letting the worker run to
+    # completion and fail at push time. A scout records no mode and delivers a
+    # report, so it is allowed through.
+    if [ "$KIND" = ship ] && [ "$MODE" != local-only ]; then
+      echo "error: '$proj' has no origin remote, so a mode=$MODE task can never push a branch or open a PR for $ID; dispatch it as --mode local-only, or give the project an origin remote first" >&2
+      return 1
+    fi
+    default=$(remoteless_default_branch "$worktree") || {
+      echo "error: '$proj' has no origin remote and no local default branch to base $ID on; expected a local main or master, or a branch checked out in the repository itself" >&2
+      return 1
+    }
+    target="refs/heads/$default"
+    echo "notice: '$proj' has no origin remote, so $ID is based on that repository's local default branch '$default' rather than fetched and reset to origin's tip" >&2
   fi
   expected=$(git -C "$worktree" rev-parse --verify --quiet "$target^{commit}" 2>/dev/null) || {
     echo "error: '$target' is not a commit for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
