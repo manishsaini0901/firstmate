@@ -478,7 +478,8 @@ test_remoteless_project_bases_on_local_default_branch() {
       "remote-less spawn diverged from the fetch-and-reset base silently"
     assert_contains "$out" "local default branch '$DEFAULT_BRANCH'" \
       "the remote-less notice did not name the local default branch it used"
-    assert_contains "$out" "project" "the remote-less notice did not name the project"
+    assert_contains "$out" "'project' has no origin remote" \
+      "the remote-less notice did not name the project it based on a local branch"
 
     local_tip=$(git -C "$PROJECT_DIR" rev-parse "refs/heads/$DEFAULT_BRANCH")
     branch_head=$(git -C "$POOL_DIR" rev-parse HEAD)

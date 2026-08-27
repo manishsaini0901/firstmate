@@ -1827,7 +1827,7 @@ remoteless_default_branch() {  # <worktree>
 }
 
 freshen_spawn_worktree_base() {  # <worktree>
-  local worktree=$1 default target expected actual status proj
+  local worktree=$1 default target expected actual status proj remotes
   proj=$(basename "$PROJ_ABS")
   # A project with NO origin remote configured at all is the legitimate
   # remote-less local-only case (AGENTS.md section 7; bin/fm-project-mode.sh):
@@ -1836,8 +1836,14 @@ freshen_spawn_worktree_base() {  # <worktree>
   # POSITIVE - origin must be absent from the configured remote list - so an
   # unreachable, misconfigured, or authentication-failing origin still takes the
   # fetch path below and still refuses, which is the whole safety property: a
-  # remote that failed to answer may well be ahead of this worktree.
-  if git -C "$worktree" remote 2>/dev/null | grep -qx origin; then
+  # remote that failed to answer may well be ahead of this worktree. Reading the
+  # remote list is itself checked, so a git error is refused rather than read as
+  # an absent origin: only a list that was actually produced can prove one.
+  if ! remotes=$(git -C "$worktree" remote 2>/dev/null); then
+    echo "error: could not read the configured remotes of pooled worktree '$worktree'; refusing to launch from an unverified base" >&2
+    return 1
+  fi
+  if printf '%s\n' "$remotes" | grep -qx origin; then
     if ! git -C "$worktree" fetch --quiet origin; then
       echo "error: could not fetch origin for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
       return 1
