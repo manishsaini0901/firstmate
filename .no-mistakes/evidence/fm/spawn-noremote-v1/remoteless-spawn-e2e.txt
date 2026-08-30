@@ -1,0 +1,26 @@
+==================================================================
+SCENARIO A: remote-less local repo, --mode local-only ship
+  pool HEAD before spawn = 30be2b422011fd2750c45faa007d9943c4fa9c6e  (stale INITIAL)
+  local main tip         = a8af4d517c595c1ab3989f08ab86f211aee6648b  (advanced)
+------------------------------------------------------------------
+notice: noremote-check-v1 ships mode=local-only while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+notice: 'project' has no origin remote, so noremote-check-v1 is based on that repository's local default branch 'main' rather than fetched and reset to origin's tip
+spawned noremote-check-v1 harness=codex kind=ship mode=local-only yolo=off window=firstmate:fm-noremote-check-v1 worktree=/tmp/e2e-remoteless-manual.jkfAwm/Trading_212_like/pool
+  exit status            = 0
+  pool HEAD after spawn  = a8af4d517c595c1ab3989f08ab86f211aee6648b
+  RESULT: worktree moved to LOCAL main tip (advance.txt present: yes)
+
+==================================================================
+SCENARIO B: SAME repo given a BROKEN (unreachable) origin
+------------------------------------------------------------------
+notice: noremote-broken-v1 ships mode=local-only while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+error: could not fetch origin for pooled worktree '/tmp/e2e-remoteless-manual.jkfAwm/Trading_212_like/pool'; refusing to launch from a potentially stale base
+  exit status            = 1  (non-zero = refused, as required)
+  pool HEAD unchanged    = yes
+  remote-less notice absent on broken origin = yes
+
+==================================================================
+SCENARIO C: SAME broken-origin repo, --mode no-mistakes (PR delivery)
+------------------------------------------------------------------
+error: 'project' has no origin remote, so a mode=no-mistakes task can never push a branch or open a PR for noremote-nm-v1; dispatch it as --mode local-only, or give the project an origin remote first
+  exit status            = 1  (non-zero = early refusal before launch)
