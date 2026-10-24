@@ -1,0 +1,29 @@
+Contributions observer: large-backlog argv overflow fix — end-to-end evidence
+=============================================================================
+
+BUG: bin/fm-fleet-snapshot.sh --contribution-input passed the whole backlog JSON
+through an argv argument (jq --argjson backlog "$BACKLOG_JSON"). Once data/backlog.md
+grew so its parsed JSON exceeded the kernel single-argument limit (MAX_ARG_STRLEN,
+~128 KiB), jq's exec failed with "Argument list too long", producing empty output.
+fm-contributions.sh poll then reported "contributions: observation unavailable" for
+every registered upstream PR.
+
+--- 1. Reproduce the failure mechanism on a real >128 KiB backlog JSON (528809 bytes) ---
+OLD PATH  jq -n --argjson backlog "$BACKLOG_JSON" ... :
+  /usr/bin/jq: Argument list too long
+  exit=126
+
+NEW PATH  jq -n --slurpfile backlog backlog.json ... (backlog routed through a file):
+  exit=0
+  merged.json bytes: 630861
+  structure OK: {backlog, tasks} preserved, 3000 records
+
+--- 2. Output is semantically identical to the old form (small input, where old works) ---
+  EQUIVALENT: old --argjson and new --slurpfile produce identical {backlog,tasks} output
+
+--- 3. Regression test is true before/after (tests/fm-contributions.test.sh) ---
+  test_large_backlog_keeps_contributions_observable
+  pre-fix snapshot script (65a3bac):  not ok - the synthetic backlog (0 bytes) did not exceed the single-argument limit
+  post-fix snapshot script (cffa47f):  ok   - a backlog larger than the argument limit keeps contributions observable
+
+--- 4. Full fm-contributions.test.sh suite on the fixed tree: all tests ok ---
